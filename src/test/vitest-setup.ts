@@ -1,3 +1,45 @@
+// Block real HTTP calls to the Lunchmoney API during unit tests.
+// Angular HTTP tests must use provideHttpClientTesting() + HttpTestingController.
+// Tests that exercise service-worker fetch logic must mock globalThis.fetch locally.
+const LUNCHMONEY_API_HOST = 'api.lunchmoney.dev';
+const _nativeFetch =
+  typeof globalThis.fetch === 'function' ? globalThis.fetch : null;
+
+globalThis.fetch = function lunchmoneyApiGuard(
+  input: RequestInfo | URL,
+  init?: RequestInit
+): Promise<Response> {
+  const rawUrl =
+    typeof input === 'string'
+      ? input
+      : input instanceof URL
+        ? input.href
+        : input.url;
+
+  try {
+    const parsed = new URL(rawUrl, 'http://localhost');
+    if (parsed.hostname === LUNCHMONEY_API_HOST) {
+      return Promise.reject(
+        new Error(
+          `[Test guard] Blocked real HTTP call to Lunchmoney API: ${rawUrl}. ` +
+            `Use provideHttpClientTesting() with HttpTestingController for ` +
+            `Angular HTTP tests, or mock globalThis.fetch in your test setup.`
+        )
+      );
+    }
+  } catch {
+    // Non-parseable or relative URLs pass through.
+  }
+
+  if (_nativeFetch) {
+    return _nativeFetch.call(globalThis, input, init);
+  }
+
+  return Promise.reject(
+    new Error('fetch is not available in this test environment')
+  );
+} as typeof fetch;
+
 const createMemoryStorage = (): Storage => {
   const data = new Map<string, string>();
 
