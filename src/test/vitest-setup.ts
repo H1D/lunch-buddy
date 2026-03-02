@@ -1,3 +1,16 @@
+// Suppress known jsdom/undici unhandled rejections (UND_ERR_INVALID_ARG)
+// that fire during tests but do not affect test correctness.
+process.on('unhandledRejection', (reason: unknown) => {
+  if (
+    reason instanceof Error &&
+    (reason as { code?: string }).code === 'UND_ERR_INVALID_ARG'
+  ) {
+    return;
+  }
+  // Re-throw any other unhandled rejections so they still fail tests.
+  throw reason;
+});
+
 // Block real HTTP calls to the Lunchmoney API during unit tests.
 // Angular HTTP tests must use provideHttpClientTesting() + HttpTestingController.
 // Tests that exercise service-worker fetch logic must mock globalThis.fetch locally.

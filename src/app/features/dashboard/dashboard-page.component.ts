@@ -4,13 +4,14 @@ import {
   signal,
   computed,
   inject,
+  effect,
   LOCALE_ID,
 } from '@angular/core';
 import { NgOptimizedImage } from '@angular/common';
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
 import { MatButtonToggleModule } from '@angular/material/button-toggle';
-import { Router } from '@angular/router';
+import { ActivatedRoute, Router } from '@angular/router';
 import {
   BudgetService,
   CategoryPreferences,
@@ -53,7 +54,13 @@ export class DashboardPageComponent {
   readonly budgetService = inject(BudgetService);
   readonly authService = inject(AuthService);
   readonly router = inject(Router);
+  private readonly route = inject(ActivatedRoute);
   private readonly locale = inject(LOCALE_ID);
+
+  constructor() {
+    this.applyUrlDateParams();
+    this.syncDatesToUrl();
+  }
 
   // Local UI state.
   protected readonly activeTab = signal<TabType>('expenses');
@@ -300,6 +307,27 @@ export class DashboardPageComponent {
     } finally {
       await this.router.navigate(['/login']);
     }
+  }
+
+  private applyUrlDateParams(): void {
+    const params = this.route.snapshot.queryParamMap;
+    const start = params.get('start');
+    const end = params.get('end');
+    if (start && end) {
+      this.budgetService.setCustomPeriod(start, end);
+    }
+  }
+
+  private syncDatesToUrl(): void {
+    effect(() => {
+      const start = this.startDate();
+      const end = this.endDate();
+      void this.router.navigate([], {
+        relativeTo: this.route,
+        queryParams: { start, end },
+        replaceUrl: true,
+      });
+    });
   }
 
   private sumBy(
