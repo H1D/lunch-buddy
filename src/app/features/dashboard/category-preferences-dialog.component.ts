@@ -435,6 +435,7 @@ export class CategoryPreferencesDialogComponent implements OnInit, OnDestroy {
     this.importText.set('');
     this.importError.set(null);
     this.logger.info('Settings imported successfully');
+    this.handleSave();
   }
 
   private resolveNotificationError(
