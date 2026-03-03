@@ -4,7 +4,17 @@ import { CategoryPreferencesDialogComponent } from './category-preferences-dialo
 import { BudgetProgress } from '../../core/models/lunchmoney.types';
 import { CategoryPreferences } from '../../shared/services/budget.service';
 import { PushNotificationService } from '../../shared/services/push-notification.service';
-import { vi, type Mock } from 'vitest';
+import { AuthService } from '../../core/services/auth.service';
+import { BudgetService } from '../../shared/services/budget.service';
+import {
+  describe,
+  it,
+  expect,
+  beforeEach,
+  afterEach,
+  vi,
+  type Mock,
+} from 'vitest';
 
 const createToggleEvent = (checked: boolean): Event =>
   ({
@@ -132,6 +142,8 @@ describe('CategoryPreferencesDialogComponent', () => {
   let fixture: ComponentFixture<CategoryPreferencesDialogComponent>;
   let component: CategoryPreferencesDialogComponent;
   let ensurePermissionSpy: Mock;
+  let setApiKeySpy: Mock;
+  let setCustomPeriodSpy: Mock;
 
   const basePreferences: CategoryPreferences = {
     customOrder: [1],
@@ -150,6 +162,8 @@ describe('CategoryPreferencesDialogComponent', () => {
 
   beforeEach(async () => {
     ensurePermissionSpy = vi.fn().mockResolvedValue({ granted: true });
+    setApiKeySpy = vi.fn();
+    setCustomPeriodSpy = vi.fn();
 
     await TestBed.configureTestingModule({
       imports: [CategoryPreferencesDialogComponent],
@@ -157,8 +171,20 @@ describe('CategoryPreferencesDialogComponent', () => {
         provideZonelessChangeDetection(),
         {
           provide: PushNotificationService,
+          useValue: { ensurePermission: ensurePermissionSpy },
+        },
+        {
+          provide: AuthService,
           useValue: {
-            ensurePermission: ensurePermissionSpy,
+            getApiKey: vi.fn().mockReturnValue(null),
+            setApiKey: setApiKeySpy,
+          },
+        },
+        {
+          provide: BudgetService,
+          useValue: {
+            getSavedCustomPeriod: vi.fn().mockReturnValue(null),
+            setCustomPeriod: setCustomPeriodSpy,
           },
         },
       ],
@@ -316,5 +342,129 @@ describe('CategoryPreferencesDialogComponent', () => {
     expect(Object.hasOwn(document.body.dataset, 'dialogScrollLockCount')).toBe(
       false
     );
+  });
+
+  // ── import feature ────────────────────────────────────────────────────────
+
+  const makeImportPayload = (
+    overrides: Partial<{
+      _type: string;
+      apiKey: string;
+      preferences: Partial<CategoryPreferences>;
+      customPeriod: { start: string; end: string };
+    }> = {}
+  ) =>
+    JSON.stringify({
+      _type: 'lunch-buddy-settings',
+      _version: 1,
+      preferences: {
+        customOrder: [3, 1],
+        hiddenCategoryIds: [2],
+        notificationsEnabled: false,
+        includeAllTransactions: false,
+        hideGroupedCategories: true,
+      },
+      ...overrides,
+    });
+
+  const setImportInputs = (): void => {
+    fixture.componentRef.setInput('open', false);
+    fixture.componentRef.setInput('items', [
+      buildCategory(1, 'Food'),
+      buildCategory(3, 'Travel'),
+    ]);
+    fixture.componentRef.setInput('hiddenItems', [buildCategory(2, 'Rent')]);
+    fixture.componentRef.setInput('preferences', {
+      customOrder: [],
+      hiddenCategoryIds: [],
+      notificationsEnabled: false,
+      includeAllTransactions: true,
+      hideGroupedCategories: false,
+    });
+  };
+
+  it('applies imported order and hidden IDs to local signals', () => {
+    setImportInputs();
+    component.importText.set(makeImportPayload());
+
+    component.applyImport();
+
+    expect(component.orderedIds()).toEqual([3, 1]);
+    expect(Array.from(component.hiddenIds())).toEqual([2]);
+    expect(component.hideGroupedCategories()).toBe(true);
+    expect(component.includeAllTransactions()).toBe(false);
+  });
+
+  it('saves and closes the dialog after a successful import', () => {
+    setImportInputs();
+    const preferencesSpy = vi.spyOn(component.preferencesChange, 'emit');
+    const closeSpy = vi.spyOn(component.dialogClose, 'emit');
+    component.importText.set(makeImportPayload());
+
+    component.applyImport();
+
+    expect(preferencesSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hiddenCategoryIds: [2],
+        hideGroupedCategories: true,
+        includeAllTransactions: false,
+      })
+    );
+    expect(closeSpy).toHaveBeenCalled();
+  });
+
+  it('preserves imported order in emitted preferences', () => {
+    setImportInputs();
+    const preferencesSpy = vi.spyOn(component.preferencesChange, 'emit');
+    component.importText.set(makeImportPayload());
+
+    component.applyImport();
+
+    const emitted = (preferencesSpy.mock.calls[0] as [CategoryPreferences])[0];
+    expect(emitted.customOrder.indexOf(3)).toBeLessThan(
+      emitted.customOrder.indexOf(1)
+    );
+  });
+
+  it('calls setApiKey when the import payload contains an API key', () => {
+    setImportInputs();
+    component.importText.set(makeImportPayload({ apiKey: 'my-secret-token' }));
+
+    component.applyImport();
+
+    expect(setApiKeySpy).toHaveBeenCalledWith('my-secret-token');
+  });
+
+  it('calls setCustomPeriod when the import payload contains a custom period', () => {
+    setImportInputs();
+    component.importText.set(
+      makeImportPayload({
+        customPeriod: { start: '2025-01-01', end: '2025-01-31' },
+      })
+    );
+
+    component.applyImport();
+
+    expect(setCustomPeriodSpy).toHaveBeenCalledWith('2025-01-01', '2025-01-31');
+  });
+
+  it('sets an error and does not save when the JSON is invalid', () => {
+    const closeSpy = vi.spyOn(component.dialogClose, 'emit');
+    component.importText.set('not-valid-json{{{');
+
+    component.applyImport();
+
+    expect(component.importError()).toContain('Invalid JSON');
+    expect(closeSpy).not.toHaveBeenCalled();
+  });
+
+  it('sets an error and does not save when _type is missing', () => {
+    const closeSpy = vi.spyOn(component.dialogClose, 'emit');
+    component.importText.set(JSON.stringify({ preferences: {} }));
+
+    component.applyImport();
+
+    expect(component.importError()).toBeTruthy();
+    expect(closeSpy).not.toHaveBeenCalled();
   });
 });
